@@ -1,5 +1,15 @@
 import { Hono } from "hono";
-import { createRequestHandler } from "react-router";
+import {
+  createRequestHandler,
+  createContext,
+  RouterContextProvider,
+} from "react-router";
+
+// Create contexts for Cloudflare bindings
+export const cloudflareContext = createContext<{
+  env: Env;
+  ctx: ExecutionContext;
+}>();
 
 declare module "react-router" {
   export interface AppLoadContext {
@@ -18,9 +28,13 @@ app.get("*", (c) => {
     import.meta.env.MODE
   );
 
-  return requestHandler(c.req.raw, {
-    cloudflare: { env: c.env, ctx: c.executionCtx },
+  const provider = new RouterContextProvider();
+  provider.set(cloudflareContext, {
+    env: c.env,
+    ctx: c.executionCtx,
   });
+
+  return requestHandler(c.req.raw, provider);
 });
 
 export default app;

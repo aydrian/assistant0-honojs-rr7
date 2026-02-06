@@ -16,6 +16,8 @@
     "typecheck": "bun run cf-typegen && react-router typegen && tsc -b"
   },
   "dependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
+    "auth0-react-router": "github:aydrian/auth0-react-router",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "hono": "^4.11.8",
@@ -23,6 +25,7 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router": "^7.10.0",
+    "react-router-auto-routes": "^0.7.1",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {

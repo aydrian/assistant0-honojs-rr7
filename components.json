@@ -10,8 +10,8 @@
     "prefix": ""
   },
   "aliases": {
-    "components": "~/components",
-    "utils": "~/lib/utils",
-    "ui": "~/components/ui"
+    "components": "app/components",
+    "utils": "app/lib/utils",
+    "ui": "app/components/ui"
   }
 }

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Development
 
 ```bash
-bun dev              # Start development server with HMR on http://localhost:5173
+bun dev              # Start development server with HMR on http://localhost:3000
 bun preview          # Preview production build locally
 bun typecheck        # Generate types and run TypeScript type checking
 ```
@@ -129,6 +129,149 @@ export async function loader({ context }: LoaderFunctionArgs) {
 ```
 
 All Cloudflare resources are accessed through `context.cloudflare.env` - there's no need for a separate API layer or backend routes.
+
+## Authentication (Auth0)
+
+This application uses **Auth0** for authentication via the `@auth0/auth0-react-router` SDK (beta). Authentication is handled entirely server-side through React Router middleware.
+
+### Configuration
+
+Auth0 is configured via environment variables in `.dev.vars` (local development) or Cloudflare Workers secrets (production):
+
+```bash
+AUTH0_SECRET=<generate with: openssl rand -hex 32>
+APP_BASE_URL=http://localhost:3000  # or production URL
+AUTH0_DOMAIN=your-tenant.auth0.com
+AUTH0_CLIENT_ID=your-client-id
+AUTH0_CLIENT_SECRET=your-client-secret
+```
+
+The Auth0 middleware is registered globally in [app/root.tsx](app/root.tsx):
+
+```typescript
+import { auth0Middleware } from "@auth0/auth0-react-router";
+
+export const middleware: Route.MiddlewareFunction[] = [
+  auth0Middleware({
+    authorizationParams: {
+      scope: "openid profile email",
+    },
+    loginRedirect: "/",
+    logoutRedirect: "/",
+  }),
+];
+```
+
+**Important**: The app requires `v8_middleware: true` flag in [react-router.config.ts](react-router.config.ts) for middleware support.
+
+### Authentication Patterns
+
+The SDK provides two patterns for handling authentication:
+
+#### Pattern 1: Optional Authentication (Public Routes)
+
+Use `getAuth0()` for routes that allow both authenticated and unauthenticated access:
+
+```typescript
+import { getAuth0 } from "@auth0/auth0-react-router";
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const { user, isAuthenticated } = getAuth0(context);
+
+  if (!isAuthenticated) {
+    return { user: null, showLoginPrompt: true };
+  }
+
+  return { user };
+}
+```
+
+**Example**: [app/routes/_index.tsx](app/routes/_index.tsx) (chat page)
+
+#### Pattern 2: Protected Routes
+
+Use `requireAuth` middleware for routes that require authentication:
+
+```typescript
+import { requireAuth, getUser } from "@auth0/auth0-react-router";
+
+export const middleware = [requireAuth];
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const user = getUser(context);  // Safe - middleware ensures user exists
+  return { user };
+}
+```
+
+The `requireAuth` middleware automatically:
+- Redirects unauthenticated users to `/auth/login?returnTo=<current-route>`
+- Preserves the intended destination URL
+- Returns users to their original page after login
+
+**Examples**: [app/routes/profile.tsx](app/routes/profile.tsx), [app/routes/documents.tsx](app/routes/documents.tsx)
+
+### Auth Routes
+
+Authentication routes are handled by [app/routes/auth.$.ts](app/routes/auth.$.ts):
+
+```typescript
+import { authSplatLoader } from "@auth0/auth0-react-router";
+
+export const loader = authSplatLoader;
+```
+
+This splat route handles:
+- `/auth/login` - Initiates OAuth flow
+- `/auth/callback` - Processes Auth0 callback
+- `/auth/logout` - Clears session and logs out
+
+### Key Functions
+
+| Function | Usage | Returns |
+|----------|-------|---------|
+| `getAuth0(context)` | Optional auth routes | `{ user?, isAuthenticated, session? }` - never throws |
+| `getUser(context)` | Protected routes only (with `requireAuth`) | Authenticated user object - throws 401 if no user |
+| `requireAuth` middleware | Route protection | Automatic redirect to login with `returnTo` |
+
+### RouterContextProvider Pattern
+
+Auth0 middleware requires React Router v7's new context provider pattern. The Hono server uses `RouterContextProvider` to pass Cloudflare bindings:
+
+```typescript
+import { RouterContextProvider, createContext } from "react-router";
+
+export const cloudflareContext = createContext<{
+  env: Env;
+  ctx: ExecutionContext;
+}>();
+
+const provider = new RouterContextProvider();
+provider.set(cloudflareContext, {
+  env: c.env,
+  ctx: c.executionCtx,
+});
+
+return requestHandler(c.req.raw, provider);
+```
+
+This pattern enables type-safe context sharing between middleware and route loaders.
+
+### File-Based Routing
+
+The app uses `react-router-auto-routes` for automatic file-based routing:
+
+```typescript
+// app/routes.ts
+import { autoRoutes } from "react-router-auto-routes";
+
+export default autoRoutes() satisfies RouteConfig;
+```
+
+Route naming conventions:
+- `_index.tsx` → `/`
+- `profile.tsx` → `/profile`
+- `documents.tsx` → `/documents`
+- `auth.$.ts` → `/auth/*` (splat route)
 
 ## Key Configuration Files
 

@@ -6,9 +6,26 @@ import {
   Scripts,
   ScrollRestoration,
 } from "react-router";
+import { auth0Middleware, getAuth0 } from "@auth0/auth0-react-router";
 
 import type { Route } from "./+types/root";
+import { Header } from "~/components/nav/Header";
 import "./app.css";
+
+export const middleware: Route.MiddlewareFunction[] = [
+  auth0Middleware({
+    authorizationParams: {
+      scope: "openid profile email",
+    },
+    loginRedirect: "/",
+    logoutRedirect: "/",
+  }),
+];
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const { user, isAuthenticated } = getAuth0(context);
+  return { user, isAuthenticated };
+}
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -33,6 +50,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
+        <Header />
         {children}
         <ScrollRestoration />
         <Scripts />
