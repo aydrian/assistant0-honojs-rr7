@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ### Development
+
 ```bash
 bun dev              # Start development server with HMR on http://localhost:5173
 bun preview          # Preview production build locally
@@ -12,13 +13,40 @@ bun typecheck        # Generate types and run TypeScript type checking
 ```
 
 ### Production
+
 ```bash
 bun build            # Build production bundle
 bun run build && wrangler deploy  # Build and deploy to Cloudflare Workers
 ```
 
 ### Testing
+
 **Note**: No test framework is currently configured in this project.
+
+### Code Quality
+
+```bash
+bun lint              # Check code with ESLint
+bun lint:fix          # Auto-fix linting issues
+bun format            # Format code with Prettier
+bun format:check      # Check code formatting
+```
+
+**Linting & Formatting**:
+
+- **ESLint 9+** with flat config for type-aware linting
+- **TypeScript ESLint** with React 19 and React Hooks support
+- **Prettier** for consistent code formatting integrated with ESLint
+- **EditorConfig** for cross-editor consistency
+
+**Configuration files**:
+
+- [eslint.config.js](eslint.config.js) - ESLint rules and plugins
+- [.prettierrc.json](.prettierrc.json) - Prettier formatting rules
+- [.editorconfig](.editorconfig) - Editor settings
+- [.vscode/settings.json](.vscode/settings.json) - Auto-format on save enabled
+
+Auto-generated files (`.react-router/`, `.wrangler/`, `worker-configuration.d.ts`) are automatically excluded from linting and formatting.
 
 ## Architecture Overview
 
@@ -27,6 +55,7 @@ This is a **full-stack React Router v7 application** with a **Hono.js backend** 
 ### Key Architectural Pattern
 
 **Hono as Request Handler** ([workers/app.ts](workers/app.ts)):
+
 ```typescript
 const app = new Hono<{ Bindings: Env }>();
 
@@ -37,7 +66,7 @@ app.get("*", (c) => {
   );
 
   return requestHandler(c.req.raw, {
-    cloudflare: { env: c.env, ctx: c.executionCtx }
+    cloudflare: { env: c.env, ctx: c.executionCtx },
   });
 });
 ```
@@ -70,7 +99,7 @@ The Hono server extends React Router's `AppLoadContext` to include Cloudflare bi
 declare module "react-router" {
   export interface AppLoadContext {
     cloudflare: {
-      env: Env;              // Environment variables and bindings
+      env: Env; // Environment variables and bindings
       ctx: ExecutionContext; // Cloudflare execution context
     };
   }
@@ -130,24 +159,31 @@ All Cloudflare resources are accessed through `context.cloudflare.env` - there's
 ## Important Notes
 
 ### Package Manager
+
 This project uses **Bun** as its package manager (recently migrated from npm). Always use `bun` commands:
+
 - `bun install` (not `npm install`)
 - `bun dev` (not `npm run dev`)
 - `bun build` (not `npm run build`)
 
 ### Server-Side Rendering
+
 - SSR is enabled by default in [react-router.config.ts](react-router.config.ts)
 - Bot detection via `isbot` package - bots wait for full content load, regular users get streaming responses
 - Uses React's `renderToReadableStream` for efficient streaming SSR
 
 ### Virtual Module
+
 The server build is imported via Vite's virtual module system:
+
 ```typescript
-import("virtual:react-router/server-build")
+import("virtual:react-router/server-build");
 ```
+
 This virtual module contains the SSR-optimized build artifacts.
 
 ### TypeScript Configuration
+
 - Path alias `~/*` maps to `./app/*` for clean imports
 - Strict mode enabled
 - Types auto-generated in `.react-router/types/` directory
@@ -158,15 +194,15 @@ To add Cloudflare resources (KV, D1, R2, etc.), configure them in [wrangler.json
 
 ```jsonc
 {
-  "kv_namespaces": [
-    { "binding": "KV", "id": "your-kv-id" }
-  ],
+  "kv_namespaces": [{ "binding": "KV", "id": "your-kv-id" }],
   "d1_databases": [
-    { "binding": "DB", "database_name": "your-db", "database_id": "your-db-id" }
+    {
+      "binding": "DB",
+      "database_name": "your-db",
+      "database_id": "your-db-id",
+    },
   ],
-  "r2_buckets": [
-    { "binding": "BUCKET", "bucket_name": "your-bucket" }
-  ]
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "your-bucket" }],
 }
 ```
 
