@@ -143,18 +143,104 @@ All Cloudflare resources are accessed through `context.cloudflare.env` - there's
 
 ```
 /app                    # React application code
+├── components/         # React components
+│   └── ui/             # shadcn/ui components (auto-generated)
+├── lib/                # Utility functions
+│   └── utils.ts        # cn() utility for className merging
 ├── routes/             # Route components (file-based routing)
 ├── routes.ts           # Route configuration
 ├── root.tsx            # Root layout with error boundary
 ├── entry.server.tsx    # Server-side rendering entry point
-└── app.css             # Global styles
+└── app.css             # Global styles with shadcn/ui theme variables
 
 /workers                # Cloudflare Workers backend
 └── app.ts              # Hono server with React Router integration
 
 /public                 # Static assets
 /.react-router          # Generated types (auto-generated)
+/components.json        # shadcn/ui configuration
 ```
+
+## UI Components (shadcn/ui)
+
+This project uses **shadcn/ui** for UI components with the **New York** style. Components are built on top of Radix UI primitives and styled with Tailwind CSS v4.
+
+### Configuration
+
+- **Style**: New York (sharper design with minimal shadows)
+- **Path Alias**: Components use `~/components/ui/*` (not `@/components/ui/*`)
+- **Theme**: Configured via CSS variables in [app/app.css](app/app.css) using Tailwind v4's `@theme` directive
+- **No Config File**: Pure CSS-first approach—no `tailwind.config.ts` needed
+- **SSR Compatible**: All components work with React Router v7 server-side rendering
+
+### Adding Components
+
+Add new shadcn/ui components using the CLI:
+
+```bash
+bun x shadcn@latest add button      # Add a single component
+bun x shadcn@latest add card input  # Add multiple components
+```
+
+Components are generated in `app/components/ui/` with the correct `~/` import paths.
+
+### Using Components
+
+Import and use components in your routes:
+
+```typescript
+import { Button } from "~/components/ui/button";
+import { Card } from "~/components/ui/card";
+
+export default function MyRoute() {
+  return (
+    <Card>
+      <Button variant="default">Click me</Button>
+      <Button variant="outline">Secondary</Button>
+    </Card>
+  );
+}
+```
+
+### Utility Function
+
+The `cn()` utility in [app/lib/utils.ts](app/lib/utils.ts) merges className strings using `clsx` and `tailwind-merge`:
+
+```typescript
+import { cn } from "~/lib/utils";
+
+// Conditionally merge classes and resolve Tailwind conflicts
+className={cn("base-class", condition && "conditional-class", props.className)}
+```
+
+### Theme Customization
+
+Theme variables are defined in [app/app.css](app/app.css) using HSL color space:
+
+```css
+@theme {
+  --radius: 0.5rem;  /* Border radius for components */
+}
+
+@layer base {
+  :root {
+    --primary: 222.2 47.4% 11.2%;
+    --secondary: 210 40% 96.1%;
+    /* ... other theme variables ... */
+  }
+}
+```
+
+Dark mode is automatically supported via `@media (prefers-color-scheme: dark)`.
+
+### Available Components
+
+View all available components at [ui.shadcn.com](https://ui.shadcn.com). Popular components include:
+
+- Form inputs: Button, Input, Textarea, Select, Checkbox, Radio
+- Layout: Card, Separator, Tabs, Dialog, Sheet
+- Feedback: Toast, Alert, Badge, Progress
+- Navigation: Dropdown Menu, Context Menu, Navigation Menu
 
 ## Important Notes
 
@@ -215,3 +301,4 @@ Then access them in loaders via `context.cloudflare.env.KV`, `context.cloudflare
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Wrangler CLI Documentation](https://developers.cloudflare.com/workers/wrangler/)
 - [TailwindCSS Documentation](https://tailwindcss.com)
+- [shadcn/ui Documentation](https://ui.shadcn.com)
