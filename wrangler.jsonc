@@ -9,6 +9,8 @@
   "main": "./workers/app.ts",
   "vars": {
     "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare",
+    "TURSO_DATABASE_URL": "libsql://placeholder.turso.io",
+    "TURSO_AUTH_TOKEN": "placeholder-token",
   },
   "observability": {
     "enabled": true,

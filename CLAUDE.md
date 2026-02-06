@@ -273,6 +273,125 @@ Route naming conventions:
 - `documents.tsx` → `/documents`
 - `auth.$.ts` → `/auth/*` (splat route)
 
+## Database Integration (Turso)
+
+This application uses **Turso** (libSQL) for database storage with the `@tursodatabase/serverless` package, optimized for edge runtimes like Cloudflare Workers.
+
+### Configuration
+
+Database credentials are configured via environment variables in `.dev.vars` (local) or Cloudflare Workers secrets (production):
+
+```bash
+TURSO_DATABASE_URL=libsql://your-database.turso.io
+TURSO_AUTH_TOKEN=your-auth-token
+```
+
+**Important**: The `nodejs_compat` compatibility flag in [wrangler.jsonc](wrangler.jsonc) is required for both Auth0 and database access. This enables `process.env` in Cloudflare Workers.
+
+### Database Client Helper
+
+Database access is provided through a simple `getDb()` helper in [app/server/db/client.ts](app/server/db/client.ts):
+
+```typescript
+import { createClient, type Client } from "@tursodatabase/serverless/compat";
+import type { AppLoadContext } from "react-router";
+
+export function getDb(_context: AppLoadContext): Client {
+  // With nodejs_compat enabled, env vars are available in process.env
+  const env = (globalThis as any).process?.env || {};
+
+  return createClient({
+    url: env.TURSO_DATABASE_URL!,
+    authToken: env.TURSO_AUTH_TOKEN!,
+  });
+}
+```
+
+### Usage in Route Loaders
+
+Access the database in any route loader:
+
+```typescript
+import { getDb } from "~/server/db/client";
+import { getUserByAuth0Id, createUser } from "~/server/db/users";
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const db = getDb(context);
+
+  // Query the database
+  const user = await getUserByAuth0Id(db, auth0Id);
+
+  return { user };
+}
+```
+
+**Example**: [app/routes/profile.tsx](app/routes/profile.tsx) demonstrates database integration with Auth0.
+
+### Row-to-Object Conversion
+
+Turso returns `Row` objects that must be converted to plain JavaScript objects for React serialization. All query functions use a `rowToObject()` helper:
+
+```typescript
+function rowToObject<T>(row: any, columns: string[]): T {
+  const obj: any = {};
+  for (const col of columns) {
+    obj[col] = row[col];
+  }
+  return obj as T;
+}
+
+export async function getUserByAuth0Id(
+  db: Client,
+  auth0Id: string,
+): Promise<User | null> {
+  const result = await db.execute({
+    sql: "SELECT * FROM users WHERE auth0_id = ?",
+    args: [auth0Id],
+  });
+
+  if (!result.rows[0]) {
+    return null;
+  }
+
+  // Convert Row to plain object for React serialization
+  return rowToObject<User>(result.rows[0], result.columns);
+}
+```
+
+### Database Schema
+
+The database schema is defined in [app/server/db/schema.sql](app/server/db/schema.sql) with tables for:
+- `users` - User profiles linked to Auth0
+- `documents` - Uploaded documents with embeddings
+- `conversations` - Chat conversation metadata
+- `messages` - Individual chat messages
+- `integrations` - OAuth tokens for third-party services
+
+All tables use Unix timestamps (`INTEGER`) for `created_at` and `updated_at` fields.
+
+### Query Functions
+
+Database queries are organized by entity in `app/server/db/`:
+- [users.ts](app/server/db/users.ts) - User management (CRUD operations)
+- [documents.ts](app/server/db/documents.ts) - Document storage and retrieval
+- [conversations.ts](app/server/db/conversations.ts) - Conversation management
+- [messages.ts](app/server/db/messages.ts) - Message CRUD
+- [integrations.ts](app/server/db/integrations.ts) - OAuth token storage
+
+All query functions:
+- Accept a `Client` instance as the first parameter
+- Use prepared statements with parameter binding (`?` placeholders)
+- Return typed TypeScript interfaces
+- Convert Turso Rows to plain objects using `rowToObject()`
+
+### Why @tursodatabase/serverless/compat?
+
+- ✅ **Edge-compatible**: Works in Cloudflare Workers, Vercel Edge, Deno
+- ✅ **No Node.js dependencies**: Uses only Web APIs (fetch)
+- ✅ **libSQL-compatible**: Drop-in replacement for `@libsql/client` API
+- ✅ **SSR-friendly**: No Vite bundling issues
+- ✅ **Performance**: Optimized for serverless/edge environments
+
 ## Key Configuration Files
 
 - **[react-router.config.ts](react-router.config.ts)** - React Router SSR configuration (`ssr: true`, Vite environment API enabled)

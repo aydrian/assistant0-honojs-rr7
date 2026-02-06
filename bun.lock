@@ -6,9 +6,10 @@
       "name": "assistant0-honojs-rr7",
       "dependencies": {
         "@radix-ui/react-slot": "^1.2.4",
+        "@tursodatabase/serverless": "^0.2.0",
+        "auth0-react-router": "github:aydrian/auth0-react-router",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
-        "auth0-react-router": "github:aydrian/auth0-react-router",
         "hono": "^4.11.8",
         "isbot": "^5.1.31",
         "react": "^19.1.1",
@@ -341,6 +342,8 @@
     "@tailwindcss/oxide-darwin-arm64": ["@tailwindcss/oxide-darwin-arm64@4.1.18", "", { "os": "darwin", "cpu": "arm64" }, "sha512-Gc2q4Qhs660bhjyBSKgq6BYvwDz4G+BuyJ5H1xfhmDR3D8HnHCmT/BSkvSL0vQLy/nkMLY20PQ2OoYMO15Jd0A=="],
 
     "@tailwindcss/vite": ["@tailwindcss/vite@4.1.18", "", { "dependencies": { "@tailwindcss/node": "4.1.18", "@tailwindcss/oxide": "4.1.18", "tailwindcss": "4.1.18" }, "peerDependencies": { "vite": "^5.2.0 || ^6 || ^7" } }, "sha512-jVA+/UpKL1vRLg6Hkao5jldawNmRo7mQYrZtNHMIVpLfLhDml5nMRUo/8MwoX2vNXvnaXNNMedrMfMugAVX1nA=="],
+
+    "@tursodatabase/serverless": ["@tursodatabase/serverless@0.2.0", "", {}, "sha512-X1pTY6kK+xEmjPSSnpn2WLlK18eVS3j117u3E9/wzK46FjQeHKpFbbvukQ2itBmMyj/umB41455vz5/tqn9BdA=="],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
 
