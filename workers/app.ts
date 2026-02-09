@@ -6,23 +6,15 @@ import {
 } from "react-router";
 
 // Create contexts for Cloudflare bindings
+// With v8_middleware enabled, use context.get(cloudflareContext) to access these values
 export const cloudflareContext = createContext<{
   env: Env;
   ctx: ExecutionContext;
 }>();
 
-declare module "react-router" {
-  export interface AppLoadContext {
-    cloudflare: {
-      env: Env;
-      ctx: ExecutionContext;
-    };
-  }
-}
-
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("*", (c) => {
+app.all("*", (c) => {
   const requestHandler = createRequestHandler(
     () => import("virtual:react-router/server-build"),
     import.meta.env.MODE

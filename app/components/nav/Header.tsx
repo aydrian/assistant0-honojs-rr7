@@ -1,10 +1,10 @@
 import { Link, useRouteLoaderData } from "react-router";
 import { Button } from "~/components/ui/button";
-import type { Route } from "~/+types/root";
+import type { Route } from "../../+types/root";
 
 export function Header() {
   // Access root loader data (will include auth context)
-  const data = useRouteLoaderData<typeof Route>("root");
+  const data = useRouteLoaderData<Route.ComponentProps["loaderData"]>("root");
   const user = data?.user;
 
   return (

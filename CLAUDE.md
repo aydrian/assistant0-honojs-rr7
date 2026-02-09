@@ -57,21 +57,32 @@ This is a **full-stack React Router v7 application** with a **Hono.js backend** 
 **Hono as Request Handler** ([workers/app.ts](workers/app.ts)):
 
 ```typescript
+import { RouterContextProvider, createContext } from "react-router";
+
+export const cloudflareContext = createContext<{
+  env: Env;
+  ctx: ExecutionContext;
+}>();
+
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("*", (c) => {
+app.all("*", (c) => {
   const requestHandler = createRequestHandler(
     () => import("virtual:react-router/server-build"),
     import.meta.env.MODE
   );
 
-  return requestHandler(c.req.raw, {
-    cloudflare: { env: c.env, ctx: c.executionCtx },
+  const provider = new RouterContextProvider();
+  provider.set(cloudflareContext, {
+    env: c.env,
+    ctx: c.executionCtx,
   });
+
+  return requestHandler(c.req.raw, provider);
 });
 ```
 
-The Hono server catches all routes (`app.get("*", ...)`) and delegates them to React Router's request handler. React Router handles routing, data loading, and server-side rendering.
+The Hono server catches all routes (`app.all("*", ...)`) and delegates them to React Router's request handler. React Router handles routing, data loading, and server-side rendering.
 
 ### Request Flow
 
@@ -91,44 +102,52 @@ entry.server.tsx (renderToReadableStream)
 HTML Response (streaming, with bot detection)
 ```
 
-### AppLoadContext Extension
+### Context Access with Middleware
 
-The Hono server extends React Router's `AppLoadContext` to include Cloudflare bindings:
+With `v8_middleware: true` enabled (required for Auth0), React Router uses the `RouterContextProvider` pattern instead of plain `AppLoadContext` objects. This requires using `context.get()` to access Cloudflare bindings:
 
 ```typescript
-declare module "react-router" {
-  export interface AppLoadContext {
-    cloudflare: {
-      env: Env; // Environment variables and bindings
-      ctx: ExecutionContext; // Cloudflare execution context
-    };
-  }
-}
+// In workers/app.ts - create and export the context
+export const cloudflareContext = createContext<{
+  env: Env; // Environment variables and bindings
+  ctx: ExecutionContext; // Cloudflare execution context
+}>();
+
+// Set values in the provider
+const provider = new RouterContextProvider();
+provider.set(cloudflareContext, {
+  env: c.env,
+  ctx: c.executionCtx,
+});
 ```
 
-This allows route loaders to access Cloudflare resources (env vars, KV, D1, R2, etc.) without a separate API layer.
+**Important**: `AppLoadContext` type extensions do NOT work when middleware is enabled. You must use the `context.get(cloudflareContext)` pattern to access Cloudflare resources in route loaders and actions.
 
 ## Data Loading Pattern
 
-Access Cloudflare context in any React Router loader:
+Access Cloudflare context in any React Router loader using `context.get()`:
 
 ```typescript
-import type { LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/my-route";
+import { cloudflareContext } from "../../workers/app";
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
+  // Extract Cloudflare bindings using context.get()
+  const cloudflare = context.get(cloudflareContext);
+
   // Access environment variables
-  const value = context.cloudflare.env.VALUE_FROM_CLOUDFLARE;
+  const value = cloudflare.env.VALUE_FROM_CLOUDFLARE;
 
   // Access Cloudflare bindings (when configured)
-  // const db = context.cloudflare.env.DB;        // D1 database
-  // const kv = context.cloudflare.env.KV;        // KV namespace
-  // const bucket = context.cloudflare.env.BUCKET; // R2 bucket
+  // const db = cloudflare.env.DB;        // D1 database
+  // const kv = cloudflare.env.KV;        // KV namespace
+  // const bucket = cloudflare.env.BUCKET; // R2 bucket
 
   return { value };
 }
 ```
 
-All Cloudflare resources are accessed through `context.cloudflare.env` - there's no need for a separate API layer or backend routes.
+**Important**: With middleware enabled, you must use `context.get(cloudflareContext)` to access Cloudflare resources. Direct property access like `context.cloudflare.env` does NOT work.
 
 ## Authentication (Auth0)
 
@@ -286,34 +305,37 @@ TURSO_DATABASE_URL=libsql://your-database.turso.io
 TURSO_AUTH_TOKEN=your-auth-token
 ```
 
-**Important**: The `nodejs_compat` compatibility flag in [wrangler.jsonc](wrangler.jsonc) is required for both Auth0 and database access. This enables `process.env` in Cloudflare Workers.
+**Important**: The `nodejs_compat` compatibility flag in [wrangler.jsonc](wrangler.jsonc) is required for Auth0 compatibility. Environment variables and Cloudflare bindings are accessed through `context.get(cloudflareContext)` in route loaders and actions, not through `process.env`.
 
 ### Database Client Helper
 
-Database access is provided through a simple `getDb()` helper in [app/server/db/client.ts](app/server/db/client.ts):
+Database access is provided through a simple `getDb()` helper in [app/.server/db/client.ts](app/.server/db/client.ts):
 
 ```typescript
 import { createClient, type Client } from "@tursodatabase/serverless/compat";
-import type { AppLoadContext } from "react-router";
+import type { RouterContextProvider } from "react-router";
+import { cloudflareContext } from "../../../workers/app";
 
-export function getDb(_context: AppLoadContext): Client {
-  // With nodejs_compat enabled, env vars are available in process.env
-  const env = (globalThis as any).process?.env || {};
+export function getDb(context: Readonly<RouterContextProvider>): Client {
+  // Extract Cloudflare bindings using the context provider pattern
+  const cloudflare = context.get(cloudflareContext);
 
   return createClient({
-    url: env.TURSO_DATABASE_URL!,
-    authToken: env.TURSO_AUTH_TOKEN!,
+    url: cloudflare.env.TURSO_DATABASE_URL!,
+    authToken: cloudflare.env.TURSO_AUTH_TOKEN!,
   });
 }
 ```
+
+**Note**: The `.server` directory prefix indicates server-only code that's excluded from client bundles (React Router convention).
 
 ### Usage in Route Loaders
 
 Access the database in any route loader:
 
 ```typescript
-import { getDb } from "~/server/db/client";
-import { getUserByAuth0Id, createUser } from "~/server/db/users";
+import { getDb } from "~/.server/db/client";
+import { getUserByAuth0Id, createUser } from "~/.server/db/users";
 
 export async function loader({ context }: Route.LoaderArgs) {
   const db = getDb(context);
@@ -360,7 +382,7 @@ export async function getUserByAuth0Id(
 
 ### Database Schema
 
-The database schema is defined in [app/server/db/schema.sql](app/server/db/schema.sql) with tables for:
+The database schema is defined in [app/.server/db/schema.sql](app/.server/db/schema.sql) with tables for:
 - `users` - User profiles linked to Auth0
 - `documents` - Uploaded documents with embeddings
 - `conversations` - Chat conversation metadata
@@ -371,12 +393,12 @@ All tables use Unix timestamps (`INTEGER`) for `created_at` and `updated_at` fie
 
 ### Query Functions
 
-Database queries are organized by entity in `app/server/db/`:
-- [users.ts](app/server/db/users.ts) - User management (CRUD operations)
-- [documents.ts](app/server/db/documents.ts) - Document storage and retrieval
-- [conversations.ts](app/server/db/conversations.ts) - Conversation management
-- [messages.ts](app/server/db/messages.ts) - Message CRUD
-- [integrations.ts](app/server/db/integrations.ts) - OAuth token storage
+Database queries are organized by entity in `app/.server/db/`:
+- [users.ts](app/.server/db/users.ts) - User management (CRUD operations)
+- [documents.ts](app/.server/db/documents.ts) - Document storage and retrieval
+- [conversations.ts](app/.server/db/conversations.ts) - Conversation management
+- [messages.ts](app/.server/db/messages.ts) - Message CRUD
+- [integrations.ts](app/.server/db/integrations.ts) - OAuth token storage
 
 All query functions:
 - Accept a `Client` instance as the first parameter
@@ -405,6 +427,9 @@ All query functions:
 
 ```
 /app                    # React application code
+├── .server/            # Server-only code (excluded from client bundle)
+│   ├── ai/             # AI/LLM integration (OpenAI)
+│   └── db/             # Database queries and schema
 ├── components/         # React components
 │   └── ui/             # shadcn/ui components (auto-generated)
 ├── lib/                # Utility functions

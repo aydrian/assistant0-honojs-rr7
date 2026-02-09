@@ -1,8 +1,8 @@
 import { requireAuth, getUser } from "@auth0/auth0-react-router";
 import type { Route } from "./+types/profile";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
-import { getDb } from "~/server/db/client";
-import { getUserByAuth0Id, createUser } from "~/server/db/users";
+import { getDb } from "~/.server/db/client";
+import { getUserByAuth0Id, createUser } from "~/.server/db/users";
 
 export function meta(_args: Route.MetaArgs) {
   return [{ title: "Profile - Assistant0" }];
@@ -12,7 +12,7 @@ export const middleware = [requireAuth];
 
 export async function loader({ context }: Route.LoaderArgs) {
   const auth0User = getUser(context);
-  const db = getDb(context as any);
+  const db = getDb(context);
 
   // Get or create user in database
   let dbUser = await getUserByAuth0Id(db, auth0User.sub);

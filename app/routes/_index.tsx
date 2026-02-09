@@ -1,6 +1,14 @@
 import { getAuth0 } from "@auth0/auth0-react-router";
 import type { Route } from "./+types/_index";
 import { Button } from "~/components/ui/button";
+import { getDb } from "~/.server/db/client";
+import {
+  createConversation,
+  listConversationsByUser,
+} from "~/.server/db/conversations";
+import { listMessagesByConversation } from "~/.server/db/messages";
+import { getUserByAuth0Id, createUser } from "~/.server/db/users";
+import { ChatWindow } from "~/components/chat/ChatWindow";
 
 export function meta(_args: Route.MetaArgs) {
   return [
@@ -14,15 +22,48 @@ export async function loader({ context }: Route.LoaderArgs) {
 
   // Allow unauthenticated access but show login prompt
   if (!isAuthenticated) {
-    return { user: null, requiresAuth: true };
+    return { user: null, requiresAuth: true, conversationId: "", messages: [] };
   }
 
-  // TODO Stage 3: Load conversation history from database
-  return { user, requiresAuth: false };
+  const db = getDb(context);
+
+  // Get or create database user (same pattern as profile route)
+  let dbUser = await getUserByAuth0Id(db, user.sub);
+  if (!dbUser) {
+    dbUser = await createUser(db, {
+      id: crypto.randomUUID(),
+      auth0_id: user.sub,
+      email: user.email!,
+      name: user.name,
+      picture: user.picture,
+    });
+  }
+
+  // Get or create default conversation for user (using database user ID)
+  let conversations = await listConversationsByUser(db, dbUser.id, 1);
+
+  if (conversations.length === 0) {
+    const newConv = await createConversation(db, {
+      id: crypto.randomUUID(),
+      user_id: dbUser.id,
+      title: "New Chat",
+    });
+    conversations = [newConv];
+  }
+
+  // Load messages from most recent conversation
+  const messages = await listMessagesByConversation(db, conversations[0].id);
+
+  return {
+    user,
+    requiresAuth: false,
+    conversationId: conversations[0].id,
+    messages,
+  };
 }
 
 export default function ChatPage({ loaderData }: Route.ComponentProps) {
-  const { user, requiresAuth } = loaderData;
+  const { requiresAuth, conversationId, messages } = loaderData;
 
   if (requiresAuth) {
     return (
@@ -39,14 +80,6 @@ export default function ChatPage({ loaderData }: Route.ComponentProps) {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold mb-4">Chat</h1>
-      <p className="text-muted-foreground">
-        Welcome, {user?.name || user?.email}!
-      </p>
-      <p className="text-sm text-muted-foreground mt-2">
-        Chat UI will be implemented in Stage 3
-      </p>
-    </div>
+    <ChatWindow conversationId={conversationId} initialMessages={messages} />
   );
 }
