@@ -8,23 +8,34 @@
   "compatibility_date": "2025-04-04",
   "main": "./workers/app.ts",
   "vars": {
-    "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare",
-    "TURSO_DATABASE_URL": "libsql://placeholder.turso.io",
-    "TURSO_AUTH_TOKEN": "placeholder-token",
+    "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
   },
   "observability": {
-    "enabled": true,
+    "enabled": true
   },
   "compatibility_flags": ["nodejs_compat"],
   /**
-   * KV Namespaces
-   * https://developers.cloudflare.com/kv/
+   * D1 Database
+   * https://developers.cloudflare.com/d1/
+   * Run: bunx wrangler d1 create assistant0-db
+   * Then update the database_id below with the output
    */
-  "kv_namespaces": [
+  "d1_databases": [
     {
-      "binding": "CHAT_STREAMS",
-      "id": "placeholder-kv-id",
-      "preview_id": "preview-chat-streams"
+      "binding": "DB",
+      "database_name": "assistant0-db",
+      "database_id": "YOUR_DATABASE_ID_HERE"
+    }
+  ],
+  /**
+   * Vectorize Index
+   * https://developers.cloudflare.com/vectorize/
+   * Run: bunx wrangler vectorize create assistant0-documents --dimensions=1536 --metric=cosine
+   */
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "assistant0-documents"
     }
   ],
   /**

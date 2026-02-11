@@ -13,7 +13,11 @@
     "lint:fix": "eslint . --fix",
     "postinstall": "bun run cf-typegen",
     "preview": "bun run build && vite preview",
-    "typecheck": "bun run cf-typegen && react-router typegen && tsc -b"
+    "typecheck": "bun run cf-typegen && react-router typegen && tsc -b",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.26",
@@ -23,11 +27,11 @@
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-slot": "^1.2.4",
-    "@tursodatabase/serverless": "^0.2.0",
     "ai": "^6.0.77",
     "auth0-react-router": "github:aydrian/auth0-react-router",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.1",
     "hono": "^4.11.8",
     "isbot": "^5.1.31",
     "react": "^19.1.1",
@@ -49,6 +53,7 @@
     "@types/react-dom": "^19.1.9",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
+    "drizzle-kit": "^0.31.9",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",

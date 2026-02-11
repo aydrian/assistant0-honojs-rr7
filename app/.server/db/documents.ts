@@ -1,171 +1,142 @@
-import type { Client } from "./client";
-import { rowToObject } from "./utils";
+import { eq, desc, inArray, and } from "drizzle-orm";
+import { documents, type Document, type NewDocument } from "./schema";
+import type { Database } from "./client";
 
-export interface Document {
-  id: string;
-  user_id: string;
-  title: string;
-  content: string;
-  file_type: string;
-  file_size: number;
-  embedding: Uint8Array | null;
-  created_at: number;
-  updated_at: number;
-}
+// Re-export types for convenience
+export type { Document, NewDocument };
 
 /**
  * Create a new document
+ * Note: Embeddings are stored in Cloudflare Vectorize, not in D1
  */
 export async function createDocument(
-  db: Client,
-  data: {
-    id: string;
-    user_id: string;
-    title: string;
-    content: string;
-    file_type: string;
-    file_size: number;
-    embedding?: Float32Array;
-  },
+  db: Database,
+  data: Omit<NewDocument, "created_at" | "updated_at">
 ): Promise<Document> {
   const now = Math.floor(Date.now() / 1000);
 
-  // Convert Float32Array to Uint8Array for BLOB storage
-  let embeddingBlob: Uint8Array | null = null;
-  if (data.embedding) {
-    embeddingBlob = new Uint8Array(data.embedding.buffer);
-  }
+  const result = await db
+    .insert(documents)
+    .values({
+      ...data,
+      created_at: now,
+      updated_at: now,
+    })
+    .returning()
+    .get();
 
-  const result = await db.execute({
-    sql: `INSERT INTO documents (id, user_id, title, content, file_type, file_size, embedding, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          RETURNING *`,
-    args: [
-      data.id,
-      data.user_id,
-      data.title,
-      data.content,
-      data.file_type,
-      data.file_size,
-      embeddingBlob,
-      now,
-      now,
-    ],
-  });
-
-  if (!result.rows[0]) {
+  if (!result) {
     throw new Error("Failed to create document");
   }
 
-  return rowToObject<Document>(result.rows[0], result.columns);
+  return result;
 }
 
 /**
  * Get a document by ID
  */
 export async function getDocumentById(
-  db: Client,
-  id: string,
+  db: Database,
+  id: string
 ): Promise<Document | null> {
-  const result = await db.execute({
-    sql: "SELECT * FROM documents WHERE id = ?",
-    args: [id],
-  });
+  const result = await db
+    .select()
+    .from(documents)
+    .where(eq(documents.id, id))
+    .get();
 
-  if (!result.rows[0]) {
-    return null;
+  return result ?? null;
+}
+
+/**
+ * Get multiple documents by their IDs
+ * Used for fetching documents after Vectorize similarity search
+ */
+export async function getDocumentsByIds(
+  db: Database,
+  ids: string[]
+): Promise<Document[]> {
+  if (ids.length === 0) {
+    return [];
   }
 
-  return rowToObject<Document>(result.rows[0], result.columns);
+  const results = await db
+    .select()
+    .from(documents)
+    .where(inArray(documents.id, ids))
+    .all();
+
+  // Preserve the order of the input IDs (important for relevance ranking)
+  const documentMap = new Map(results.map((doc) => [doc.id, doc]));
+  return ids.map((id) => documentMap.get(id)).filter(Boolean) as Document[];
 }
 
 /**
  * List all documents for a user
  */
 export async function listDocumentsByUser(
-  db: Client,
-  userId: string,
+  db: Database,
+  userId: string
 ): Promise<Document[]> {
-  const result = await db.execute({
-    sql: "SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC",
-    args: [userId],
-  });
-
-  return result.rows.map((row) => rowToObject<Document>(row, result.columns));
+  return db
+    .select()
+    .from(documents)
+    .where(eq(documents.user_id, userId))
+    .orderBy(desc(documents.created_at))
+    .all();
 }
 
 /**
  * Update a document
  */
 export async function updateDocument(
-  db: Client,
+  db: Database,
   id: string,
   data: {
     title?: string;
     content?: string;
-    embedding?: Float32Array;
-  },
+  }
 ): Promise<Document> {
   const now = Math.floor(Date.now() / 1000);
 
-  // Build dynamic update query
-  const updates: string[] = ["updated_at = ?"];
-  const args: (string | number | Uint8Array)[] = [now];
+  const result = await db
+    .update(documents)
+    .set({
+      ...data,
+      updated_at: now,
+    })
+    .where(eq(documents.id, id))
+    .returning()
+    .get();
 
-  if (data.title !== undefined) {
-    updates.push("title = ?");
-    args.push(data.title);
-  }
-  if (data.content !== undefined) {
-    updates.push("content = ?");
-    args.push(data.content);
-  }
-  if (data.embedding !== undefined) {
-    updates.push("embedding = ?");
-    args.push(new Uint8Array(data.embedding.buffer));
-  }
-
-  args.push(id);
-
-  const result = await db.execute({
-    sql: `UPDATE documents SET ${updates.join(", ")} WHERE id = ? RETURNING *`,
-    args,
-  });
-
-  if (!result.rows[0]) {
+  if (!result) {
     throw new Error("Document not found");
   }
 
-  return rowToObject<Document>(result.rows[0], result.columns);
+  return result;
 }
 
 /**
  * Delete a document
+ * Note: Also delete the corresponding vector from Vectorize separately
  */
-export async function deleteDocument(db: Client, id: string): Promise<void> {
-  await db.execute({
-    sql: "DELETE FROM documents WHERE id = ?",
-    args: [id],
-  });
+export async function deleteDocument(db: Database, id: string): Promise<void> {
+  await db.delete(documents).where(eq(documents.id, id)).run();
 }
 
 /**
- * Search documents by embedding similarity
- * Note: This is a placeholder implementation. Full vector search will be implemented in Stage 5
- * with proper cosine similarity calculation.
+ * Check if a document exists and belongs to a user
  */
-export async function searchDocumentsByEmbedding(
-  db: Client,
-  userId: string,
-  queryEmbedding: Float32Array,
-  limit: number = 3,
-): Promise<Document[]> {
-  // For now, just return all user documents
-  // TODO Stage 5: Implement cosine similarity search
-  const result = await db.execute({
-    sql: "SELECT * FROM documents WHERE user_id = ? AND embedding IS NOT NULL LIMIT ?",
-    args: [userId, limit],
-  });
+export async function documentBelongsToUser(
+  db: Database,
+  documentId: string,
+  userId: string
+): Promise<boolean> {
+  const result = await db
+    .select({ id: documents.id })
+    .from(documents)
+    .where(and(eq(documents.id, documentId), eq(documents.user_id, userId)))
+    .get();
 
-  return result.rows.map((row) => rowToObject<Document>(row, result.columns));
+  return result !== undefined;
 }

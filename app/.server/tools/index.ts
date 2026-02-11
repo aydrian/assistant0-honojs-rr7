@@ -5,6 +5,7 @@
 
 import type { RouterContextProvider } from "react-router";
 import { createSerpApiTool } from "./serpapi";
+import { createDocumentSearchTool } from "./document-rag";
 import type { AIContext } from "../ai/context";
 
 /**
@@ -20,11 +21,12 @@ export function createAllTools(
   aiContext?: AIContext
 ) {
   const serpApiTool = createSerpApiTool(context, aiContext);
+  const documentSearchTool = createDocumentSearchTool(context, aiContext);
 
   return {
     ...(serpApiTool ? { serpApiTool } : {}),
+    ...(documentSearchTool ? { searchDocuments: documentSearchTool } : {}),
     // Future tools will be added here:
-    // ...(documentSearchTool ? { search_documents: documentSearchTool } : {}),
     // ...(gmailTool ? { list_emails: gmailTool } : {}),
     // ...(calendarTool ? { list_calendar: calendarTool } : {}),
   };
@@ -32,3 +34,4 @@ export function createAllTools(
 
 // Export types
 export type { ToolCallInfo, SearchResult, WebSearchResult } from "./types";
+export type { DocumentSearchResult } from "./document-rag";

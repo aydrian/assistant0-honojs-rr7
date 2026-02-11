@@ -19,6 +19,15 @@ bun build            # Build production bundle
 bun run build && wrangler deploy  # Build and deploy to Cloudflare Workers
 ```
 
+### Database (Drizzle)
+
+```bash
+bun db:generate      # Generate migrations from schema changes
+bun db:migrate       # Run pending migrations
+bun db:push          # Push schema directly (dev only, bypasses migrations)
+bun db:studio        # Open Drizzle Studio for data browsing
+```
+
 ### Testing
 
 **Note**: No test framework is currently configured in this project.
@@ -292,125 +301,297 @@ Route naming conventions:
 - `documents.tsx` → `/documents`
 - `auth.$.ts` → `/auth/*` (splat route)
 
-## Database Integration (Turso)
+## Database Integration (D1 + Drizzle)
 
-This application uses **Turso** (libSQL) for database storage with the `@tursodatabase/serverless` package, optimized for edge runtimes like Cloudflare Workers.
+This application uses **Cloudflare D1** (SQLite) for database storage with **Drizzle ORM**, providing type-safe database access optimized for Cloudflare Workers.
 
 ### Configuration
 
-Database credentials are configured via environment variables in `.dev.vars` (local) or Cloudflare Workers secrets (production):
+D1 is configured in [wrangler.jsonc](wrangler.jsonc) with a database binding:
 
-```bash
-TURSO_DATABASE_URL=libsql://your-database.turso.io
-TURSO_AUTH_TOKEN=your-auth-token
+```jsonc
+{
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "assistant0-db",
+      "database_id": "YOUR_DATABASE_ID_HERE"
+    }
+  ]
+}
 ```
 
-**Important**: The `nodejs_compat` compatibility flag in [wrangler.jsonc](wrangler.jsonc) is required for Auth0 compatibility. Environment variables and Cloudflare bindings are accessed through `context.get(cloudflareContext)` in route loaders and actions, not through `process.env`.
+Create the D1 database:
+
+```bash
+bunx wrangler d1 create assistant0-db
+# Copy the database_id to wrangler.jsonc
+```
+
+### Database Commands
+
+```bash
+bun db:generate    # Generate migrations from schema changes
+bun db:migrate     # Run pending migrations
+bun db:push        # Push schema directly (dev only)
+bun db:studio      # Open Drizzle Studio for data browsing
+```
 
 ### Database Client Helper
 
-Database access is provided through a simple `getDb()` helper in [app/.server/db/client.ts](app/.server/db/client.ts):
+Database access is provided through a `getDb()` helper in [app/.server/db/client.ts](app/.server/db/client.ts):
 
 ```typescript
-import { createClient, type Client } from "@tursodatabase/serverless/compat";
+import { drizzle } from "drizzle-orm/d1";
+import * as schema from "./schema";
 import type { RouterContextProvider } from "react-router";
 import { cloudflareContext } from "../../../workers/app";
 
-export function getDb(context: Readonly<RouterContextProvider>): Client {
-  // Extract Cloudflare bindings using the context provider pattern
+export function getDb(context: Readonly<RouterContextProvider>) {
   const cloudflare = context.get(cloudflareContext);
-
-  return createClient({
-    url: cloudflare.env.TURSO_DATABASE_URL!,
-    authToken: cloudflare.env.TURSO_AUTH_TOKEN!,
-  });
+  return drizzle(cloudflare.env.DB, { schema });
 }
+
+export type Database = ReturnType<typeof getDb>;
 ```
 
 **Note**: The `.server` directory prefix indicates server-only code that's excluded from client bundles (React Router convention).
 
+### Schema Definition (Drizzle)
+
+Schemas are defined in `app/.server/db/schema/` using Drizzle's schema builder:
+
+```typescript
+// app/.server/db/schema/documents.sql.ts
+import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+
+export const documents = sqliteTable(
+  "documents",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    file_type: text("file_type").notNull(),
+    file_size: integer("file_size").notNull(),
+    created_at: integer("created_at", { mode: "number" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updated_at: integer("updated_at", { mode: "number" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => [index("idx_documents_user_id").on(table.user_id)]
+);
+```
+
+Types are automatically inferred from schemas:
+
+```typescript
+// app/.server/db/schema/index.ts
+export * from "./documents.sql";
+import { documents } from "./documents.sql";
+
+export type Document = typeof documents.$inferSelect;
+export type NewDocument = typeof documents.$inferInsert;
+```
+
 ### Usage in Route Loaders
 
-Access the database in any route loader:
+Access the database with type-safe queries:
 
 ```typescript
 import { getDb } from "~/.server/db/client";
-import { getUserByAuth0Id, createUser } from "~/.server/db/users";
+import { listDocumentsByUser } from "~/.server/db/documents";
 
 export async function loader({ context }: Route.LoaderArgs) {
   const db = getDb(context);
-
-  // Query the database
-  const user = await getUserByAuth0Id(db, auth0Id);
-
-  return { user };
+  const documents = await listDocumentsByUser(db, user.sub);
+  return { documents };
 }
 ```
-
-**Example**: [app/routes/profile.tsx](app/routes/profile.tsx) demonstrates database integration with Auth0.
-
-### Row-to-Object Conversion
-
-Turso returns `Row` objects that must be converted to plain JavaScript objects for React serialization. All query functions use a `rowToObject()` helper:
-
-```typescript
-function rowToObject<T>(row: any, columns: string[]): T {
-  const obj: any = {};
-  for (const col of columns) {
-    obj[col] = row[col];
-  }
-  return obj as T;
-}
-
-export async function getUserByAuth0Id(
-  db: Client,
-  auth0Id: string,
-): Promise<User | null> {
-  const result = await db.execute({
-    sql: "SELECT * FROM users WHERE auth0_id = ?",
-    args: [auth0Id],
-  });
-
-  if (!result.rows[0]) {
-    return null;
-  }
-
-  // Convert Row to plain object for React serialization
-  return rowToObject<User>(result.rows[0], result.columns);
-}
-```
-
-### Database Schema
-
-The database schema is defined in [app/.server/db/schema.sql](app/.server/db/schema.sql) with tables for:
-- `users` - User profiles linked to Auth0
-- `documents` - Uploaded documents with embeddings
-- `conversations` - Chat conversation metadata
-- `integrations` - OAuth tokens for third-party services
-
-All tables use Unix timestamps (`INTEGER`) for `created_at` and `updated_at` fields.
 
 ### Query Functions
 
 Database queries are organized by entity in `app/.server/db/`:
-- [users.ts](app/.server/db/users.ts) - User management (CRUD operations)
-- [documents.ts](app/.server/db/documents.ts) - Document storage and retrieval
-- [conversations.ts](app/.server/db/conversations.ts) - Conversation management
-- [integrations.ts](app/.server/db/integrations.ts) - OAuth token storage
+
+- [documents.ts](app/.server/db/documents.ts) - Document CRUD operations
 
 All query functions:
-- Accept a `Client` instance as the first parameter
-- Use prepared statements with parameter binding (`?` placeholders)
-- Return typed TypeScript interfaces
-- Convert Turso Rows to plain objects using `rowToObject()`
+- Accept a `Database` instance as the first parameter
+- Use Drizzle's type-safe query builder
+- Return typed TypeScript interfaces inferred from schemas
+- No manual Row-to-Object conversion needed (Drizzle handles this)
 
-### Why @tursodatabase/serverless/compat?
+Example query function:
 
-- ✅ **Edge-compatible**: Works in Cloudflare Workers, Vercel Edge, Deno
-- ✅ **No Node.js dependencies**: Uses only Web APIs (fetch)
-- ✅ **libSQL-compatible**: Drop-in replacement for `@libsql/client` API
-- ✅ **SSR-friendly**: No Vite bundling issues
-- ✅ **Performance**: Optimized for serverless/edge environments
+```typescript
+import { eq, desc } from "drizzle-orm";
+import { documents, type Document } from "./schema";
+import type { Database } from "./client";
+
+export async function listDocumentsByUser(
+  db: Database,
+  userId: string
+): Promise<Document[]> {
+  return db
+    .select()
+    .from(documents)
+    .where(eq(documents.user_id, userId))
+    .orderBy(desc(documents.created_at))
+    .all();
+}
+```
+
+### Drizzle Configuration
+
+Drizzle Kit is configured in [drizzle.config.ts](drizzle.config.ts):
+
+```typescript
+import type { Config } from "drizzle-kit";
+
+export default {
+  out: "./migrations",
+  schema: "./app/.server/db/schema/**.sql.ts",
+  dialect: "sqlite",
+  driver: "d1-http",
+} satisfies Config;
+```
+
+### Why D1 + Drizzle?
+
+- ✅ **Native Cloudflare integration**: No external network calls, lowest latency
+- ✅ **Type-safe queries**: Full TypeScript inference from schema definitions
+- ✅ **Zero runtime overhead**: Drizzle compiles to optimized SQL
+- ✅ **Schema migrations**: Built-in migration generation and management
+- ✅ **Edge-optimized**: Designed for Cloudflare Workers environment
+- ✅ **Drizzle Studio**: Visual database browser for development
+
+## Document Management & RAG
+
+This application supports document uploads with semantic search using **Cloudflare Vectorize** for embeddings and **OpenAI** for embedding generation.
+
+### Configuration
+
+Vectorize is configured in [wrangler.jsonc](wrangler.jsonc):
+
+```jsonc
+{
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "assistant0-documents"
+    }
+  ]
+}
+```
+
+Create the Vectorize index:
+
+```bash
+bunx wrangler vectorize create assistant0-documents --dimensions=1536 --metric=cosine
+```
+
+The `OPENAI_API_KEY` environment variable is required for embedding generation.
+
+### Embeddings Generation
+
+Embeddings are generated using OpenAI's `text-embedding-3-small` model via [app/.server/embeddings/client.ts](app/.server/embeddings/client.ts):
+
+```typescript
+import { embed } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+export async function generateEmbedding(
+  text: string,
+  env: Env
+): Promise<number[]> {
+  const openai = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+  const { embedding } = await embed({
+    model: openai.embedding("text-embedding-3-small"),
+    value: text,
+  });
+  return embedding;
+}
+
+// Truncate text to fit embedding model's context window
+export function truncateForEmbedding(text: string, maxChars = 24000): string {
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
+}
+```
+
+### Vectorize Operations
+
+Vector storage and search is handled in [app/.server/embeddings/vectorize.ts](app/.server/embeddings/vectorize.ts):
+
+```typescript
+// Insert/update a vector
+export async function insertVector(
+  vectorize: VectorizeIndex,
+  documentId: string,
+  userId: string,
+  embedding: number[],
+  title?: string
+): Promise<void>;
+
+// Search for similar vectors (filtered by userId for multi-tenant isolation)
+export async function searchVectors(
+  vectorize: VectorizeIndex,
+  queryEmbedding: number[],
+  userId: string,
+  topK?: number
+): Promise<VectorSearchResult[]>;
+
+// Delete vectors
+export async function deleteVector(vectorize: VectorizeIndex, documentId: string): Promise<void>;
+export async function deleteVectors(vectorize: VectorizeIndex, documentIds: string[]): Promise<void>;
+```
+
+### Document RAG Tool
+
+The document search tool in [app/.server/tools/document-rag.ts](app/.server/tools/document-rag.ts) enables semantic search over user documents:
+
+```typescript
+import { tool } from "ai";
+import { z } from "zod";
+
+export function createDocumentSearchTool(context, aiContext?) {
+  return tool({
+    description: "Search your uploaded documents for relevant information",
+    inputSchema: z.object({
+      query: z.string().describe("Search query to find relevant documents"),
+    }),
+    execute: async ({ query }) => {
+      // 1. Get authenticated user
+      // 2. Generate query embedding
+      // 3. Search Vectorize with user filter
+      // 4. Fetch document content from D1
+      // 5. Return results with similarity scores
+    },
+  });
+}
+```
+
+**Search Flow**:
+1. User asks a question about their documents
+2. Claude calls the `searchDocuments` tool
+3. Query text is converted to embedding vector
+4. Vectorize returns top 3 most similar document IDs (filtered by user)
+5. Document content is fetched from D1
+6. Results returned to Claude with similarity scores
+
+### Multi-Tenant Isolation
+
+All vector operations filter by `userId` (Auth0 `sub`) to ensure users can only search their own documents. This is enforced at the Vectorize query level:
+
+```typescript
+const results = await vectorize.query(queryEmbedding, {
+  topK,
+  filter: { userId },  // Metadata filter for tenant isolation
+  returnMetadata: "all",
+});
+```
 
 ## AI Chat Agent
 
@@ -579,13 +760,20 @@ This is used for tracking `threadID` for future Auth0 AI Token Vault features.
 │   │   ├── client.ts   # OpenAI model configuration
 │   │   ├── auth0-ai.ts # Auth0 AI SDK instance
 │   │   └── context.ts  # Request-scoped AI context
-│   ├── db/             # Database queries and schema
-│   │   ├── client.ts   # Turso client helper
-│   │   ├── utils.ts    # Shared utilities (rowToObject)
-│   │   └── *.ts        # Entity query modules
+│   ├── db/             # Database with Drizzle ORM
+│   │   ├── client.ts   # D1 Drizzle client helper
+│   │   ├── schema/     # Drizzle schema definitions
+│   │   │   ├── index.ts       # Schema exports and types
+│   │   │   └── documents.sql.ts  # Documents table schema
+│   │   └── documents.ts  # Document query functions
+│   ├── embeddings/     # Vector embedding utilities
+│   │   ├── index.ts    # Exports for embedding functions
+│   │   ├── client.ts   # OpenAI embedding generation
+│   │   └── vectorize.ts  # Cloudflare Vectorize operations
 │   └── tools/          # AI tool definitions
 │       ├── index.ts    # Tool registry
 │       ├── serpapi.ts  # Web search tool
+│       ├── document-rag.ts  # Document search tool (RAG)
 │       └── types.ts    # Tool type definitions
 ├── components/         # React components
 │   ├── chat/           # Chat UI components
@@ -609,11 +797,15 @@ This is used for tracking `threadID` for future Auth0 AI Token Vault features.
 /workers                # Cloudflare Workers backend
 └── app.ts              # Hono server with React Router integration
 
+/migrations             # D1 database migrations (generated by Drizzle Kit)
+└── 0001_initial.sql    # Initial schema migration
+
 /docs                   # Documentation
 └── reference-app-ts-vercel-ai.md  # Reference implementation guide
 
 /public                 # Static assets
 /.react-router          # Generated types (auto-generated)
+/drizzle.config.ts      # Drizzle Kit configuration
 /components.json        # shadcn/ui configuration
 ```
 
