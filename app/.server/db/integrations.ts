@@ -1,4 +1,5 @@
 import type { Client } from "./client";
+import { rowToObject } from "./utils";
 
 export interface Integration {
   id: string;
@@ -51,7 +52,7 @@ export async function createIntegration(
     throw new Error("Failed to create integration");
   }
 
-  return result.rows[0] as unknown as Integration;
+  return rowToObject<Integration>(result.rows[0], result.columns);
 }
 
 /**
@@ -71,7 +72,7 @@ export async function getIntegration(
     return null;
   }
 
-  return result.rows[0] as unknown as Integration;
+  return rowToObject<Integration>(result.rows[0], result.columns);
 }
 
 /**
@@ -109,7 +110,7 @@ export async function updateIntegrationTokens(
     throw new Error("Integration not found");
   }
 
-  return result.rows[0] as unknown as Integration;
+  return rowToObject<Integration>(result.rows[0], result.columns);
 }
 
 /**
@@ -138,5 +139,7 @@ export async function listIntegrationsByUser(
     args: [userId],
   });
 
-  return result.rows as unknown as Integration[];
+  return result.rows.map((row) =>
+    rowToObject<Integration>(row, result.columns),
+  );
 }

@@ -386,7 +386,6 @@ The database schema is defined in [app/.server/db/schema.sql](app/.server/db/sch
 - `users` - User profiles linked to Auth0
 - `documents` - Uploaded documents with embeddings
 - `conversations` - Chat conversation metadata
-- `messages` - Individual chat messages
 - `integrations` - OAuth tokens for third-party services
 
 All tables use Unix timestamps (`INTEGER`) for `created_at` and `updated_at` fields.
@@ -397,7 +396,6 @@ Database queries are organized by entity in `app/.server/db/`:
 - [users.ts](app/.server/db/users.ts) - User management (CRUD operations)
 - [documents.ts](app/.server/db/documents.ts) - Document storage and retrieval
 - [conversations.ts](app/.server/db/conversations.ts) - Conversation management
-- [messages.ts](app/.server/db/messages.ts) - Message CRUD
 - [integrations.ts](app/.server/db/integrations.ts) - OAuth token storage
 
 All query functions:
@@ -414,6 +412,155 @@ All query functions:
 - ✅ **SSR-friendly**: No Vite bundling issues
 - ✅ **Performance**: Optimized for serverless/edge environments
 
+## AI Chat Agent
+
+This application uses **Vercel AI SDK v6** with **OpenAI** for the chat agent, integrated with **Auth0 AI** for multi-step tool execution and future Token Vault support.
+
+### Configuration
+
+AI/LLM credentials are configured via environment variables in `.dev.vars` (local) or Cloudflare Workers secrets (production):
+
+```bash
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_BASE_URL=optional-custom-base-url  # For Azure OpenAI or proxies
+SERPAPI_API_KEY=your-serpapi-key          # Optional: enables web search tool
+```
+
+### AI Model Setup
+
+The AI model is configured in [app/.server/ai/client.ts](app/.server/ai/client.ts):
+
+```typescript
+import { createOpenAI } from "@ai-sdk/openai";
+
+export function getAIModel(context: Readonly<RouterContextProvider>) {
+  const cloudflare = context.get(cloudflareContext);
+  const openai = createOpenAI({
+    apiKey: cloudflare.env.OPENAI_API_KEY,
+    baseURL: cloudflare.env.OPENAI_BASE_URL || undefined,
+  });
+  return openai.chat("gpt-4o-mini");
+}
+```
+
+### Chat API Endpoint
+
+The chat endpoint at [app/routes/api.chat.ts](app/routes/api.chat.ts) uses the `createUIMessageStream` pattern for streaming responses with tool support:
+
+```typescript
+import { streamText, createUIMessageStream, createUIMessageStreamResponse } from "ai";
+import { withInterruptions } from "@auth0/ai-vercel/interrupts";
+
+export async function action({ request, context }: Route.ActionArgs) {
+  const { user } = getAuth0(context);
+  const { messages } = await request.json();
+  const model = getAIModel(context);
+  const tools = createAllTools(context);
+
+  const stream = createUIMessageStream({
+    originalMessages: messages,
+    execute: withInterruptions(
+      async ({ writer }) => {
+        const result = streamText({
+          model,
+          system: getSystemPrompt(),
+          messages,
+          tools,
+        });
+        writer.merge(result.toUIMessageStream({ sendReasoning: true }));
+      },
+      { messages, tools }
+    ),
+  });
+
+  return createUIMessageStreamResponse({ stream });
+}
+```
+
+**Key patterns**:
+- `withInterruptions` enables multi-step tool calling (tool results feed back to LLM)
+- `createUIMessageStream` provides structured streaming for the `useChat` hook
+- Messages are client-side only (not persisted to database)
+
+### Tool Framework
+
+Tools are defined in [app/.server/tools/](app/.server/tools/) using Vercel AI SDK's `tool()` helper with Zod schemas:
+
+```typescript
+// app/.server/tools/serpapi.ts
+import { tool } from "ai";
+import { z } from "zod";
+
+export function createSerpApiTool(context: Readonly<RouterContextProvider>) {
+  const cloudflare = context.get(cloudflareContext);
+  const apiKey = cloudflare.env.SERPAPI_API_KEY;
+
+  if (!apiKey) return null;  // Conditional loading
+
+  return tool({
+    description: "Search the web for current information",
+    inputSchema: z.object({
+      query: z.string().describe("The search query"),
+      numResults: z.number().optional(),
+    }),
+    execute: async ({ query, numResults = 5 }) => {
+      // Implementation
+      return { query, results };
+    },
+  });
+}
+```
+
+The tool registry in [app/.server/tools/index.ts](app/.server/tools/index.ts) conditionally loads tools based on available API keys:
+
+```typescript
+export function createAllTools(context, aiContext?) {
+  const serpApiTool = createSerpApiTool(context, aiContext);
+  return {
+    ...(serpApiTool ? { serpApiTool } : {}),
+    // Future tools added here
+  };
+}
+```
+
+### Client-Side Chat
+
+The chat UI uses AI SDK v6's `useChat` hook with Auth0 AI interruptions:
+
+```typescript
+// app/routes/_index.tsx
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { useInterruptions } from "@auth0/ai-vercel/react";
+
+const { messages, sendMessage, status } = useInterruptions(
+  (handler) =>
+    useChat({
+      transport: new DefaultChatTransport({ api: "/api/chat" }),
+      onError: handler((error) => console.error(error)),
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    })
+);
+```
+
+**Key components**:
+- [ChatWindow.tsx](app/components/chat/ChatWindow.tsx) - Message list with auto-scroll
+- [ChatInput.tsx](app/components/chat/ChatInput.tsx) - Input with Enter to send
+- [MessageBubble.tsx](app/components/chat/MessageBubble.tsx) - Message rendering with Markdown
+- [ToolCallBadge.tsx](app/components/chat/ToolCallBadge.tsx) - Collapsible tool call display
+
+### AI Context (Cloudflare-Compatible)
+
+Since Cloudflare Workers don't support `AsyncLocalStorage`, request-scoped AI context is managed via [app/.server/ai/context.ts](app/.server/ai/context.ts):
+
+```typescript
+export function setRequestAIContext(ctx: AIContext): void;
+export function getRequestAIContext(): AIContext;
+export function clearRequestAIContext(): void;
+```
+
+This is used for tracking `threadID` for future Auth0 AI Token Vault features.
+
 ## Key Configuration Files
 
 - **[react-router.config.ts](react-router.config.ts)** - React Router SSR configuration (`ssr: true`, Vite environment API enabled)
@@ -428,13 +575,32 @@ All query functions:
 ```
 /app                    # React application code
 ├── .server/            # Server-only code (excluded from client bundle)
-│   ├── ai/             # AI/LLM integration (OpenAI)
-│   └── db/             # Database queries and schema
+│   ├── ai/             # AI/LLM integration
+│   │   ├── client.ts   # OpenAI model configuration
+│   │   ├── auth0-ai.ts # Auth0 AI SDK instance
+│   │   └── context.ts  # Request-scoped AI context
+│   ├── db/             # Database queries and schema
+│   │   ├── client.ts   # Turso client helper
+│   │   ├── utils.ts    # Shared utilities (rowToObject)
+│   │   └── *.ts        # Entity query modules
+│   └── tools/          # AI tool definitions
+│       ├── index.ts    # Tool registry
+│       ├── serpapi.ts  # Web search tool
+│       └── types.ts    # Tool type definitions
 ├── components/         # React components
+│   ├── chat/           # Chat UI components
+│   │   ├── ChatWindow.tsx
+│   │   ├── ChatInput.tsx
+│   │   ├── MessageBubble.tsx
+│   │   └── ToolCallBadge.tsx
 │   └── ui/             # shadcn/ui components (auto-generated)
 ├── lib/                # Utility functions
-│   └── utils.ts        # cn() utility for className merging
+│   ├── utils.ts        # cn() utility for className merging
+│   └── markdown.tsx    # Markdown renderer component
 ├── routes/             # Route components (file-based routing)
+│   ├── _index.tsx      # Chat page (/)
+│   ├── api.chat.ts     # Chat API endpoint
+│   └── ...             # Other routes
 ├── routes.ts           # Route configuration
 ├── root.tsx            # Root layout with error boundary
 ├── entry.server.tsx    # Server-side rendering entry point
@@ -442,6 +608,9 @@ All query functions:
 
 /workers                # Cloudflare Workers backend
 └── app.ts              # Hono server with React Router integration
+
+/docs                   # Documentation
+└── reference-app-ts-vercel-ai.md  # Reference implementation guide
 
 /public                 # Static assets
 /.react-router          # Generated types (auto-generated)
@@ -580,6 +749,14 @@ To add Cloudflare resources (KV, D1, R2, etc.), configure them in [wrangler.json
 ```
 
 Then access them in loaders via `context.cloudflare.env.KV`, `context.cloudflare.env.DB`, etc.
+
+## Reference Application
+
+The `ts-vercel-ai` application serves as a reference implementation for AI assistant patterns. It demonstrates production-ready implementations of Auth0 AI Token Vault, RAG with vector search, fine-grained authorization (FGA), and streaming chat with tool calls.
+
+**Documentation**: [docs/reference-app-ts-vercel-ai.md](docs/reference-app-ts-vercel-ai.md)
+
+**Source**: `/Users/aydrian.howard/Developer/okta/auth0-assistant0/ts-vercel-ai`
 
 ## References
 

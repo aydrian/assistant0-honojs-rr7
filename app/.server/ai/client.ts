@@ -10,11 +10,13 @@ export function getAIModel(context: Readonly<RouterContextProvider>) {
   // Extract Cloudflare bindings using the context provider pattern
   const cloudflare = context.get(cloudflareContext);
   const apiKey = cloudflare.env.OPENAI_API_KEY;
-  const baseURL = cloudflare.env.OPENAI_BASE_URL;
+  // OPENAI_BASE_URL is optional and may not be defined in all environments
+  const baseURL = (cloudflare.env as unknown as Record<string, string>)
+    .OPENAI_BASE_URL;
 
   if (!apiKey) {
     throw new Error(
-      "OPENAI_API_KEY environment variable is not set. Please configure it in .dev.vars or Cloudflare Workers secrets.",
+      "OPENAI_API_KEY environment variable is not set. Please configure it in .dev.vars or Cloudflare Workers secrets."
     );
   }
 
@@ -24,19 +26,20 @@ export function getAIModel(context: Readonly<RouterContextProvider>) {
     baseURL: baseURL || undefined,
   });
 
-  // Use GPT-4 Turbo (faster, cheaper than GPT-4, better than GPT-3.5)
-  return openai("gpt-4-turbo");
+  // Use Chat Completions API (not Responses API) for ZDR organization compatibility
+  return openai.chat("gpt-4o-mini");
 }
 
 /**
- * System prompt for Assistant0
+ * Generate the system prompt with current date/time
+ * Matches the reference application format
  */
-export const ASSISTANT_SYSTEM_PROMPT = `You are Assistant0, a helpful AI assistant. You provide clear, accurate, and friendly responses to user questions. You can help with a wide variety of tasks including:
+export function getSystemPrompt(): string {
+  const date = new Date().toISOString();
 
-- Answering questions and providing information
-- Helping with writing and editing
-- Explaining complex topics
-- Problem-solving and brainstorming
-- General conversation
-
-Be concise but thorough in your responses. If you're not sure about something, say so honestly.`;
+  return `You are a personal assistant named Assistant0. You are a helpful assistant that can answer questions and help with tasks.
+You have access to a set of tools. When using tools, you MUST provide valid JSON arguments. Always format tool call arguments as proper JSON objects.
+For example, when calling shop_online tool, format like this:
+{"product": "iPhone", "qty": 1, "priceLimit": 1000}
+Use the tools as needed to answer the user's question. Render the email body as a markdown block, do not wrap it in code blocks. The current date and time is ${date}.`;
+}

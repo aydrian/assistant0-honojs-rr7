@@ -1,4 +1,5 @@
 import type { Client } from "./client";
+import { rowToObject } from "./utils";
 
 export interface Document {
   id: string;
@@ -56,7 +57,7 @@ export async function createDocument(
     throw new Error("Failed to create document");
   }
 
-  return result.rows[0] as unknown as Document;
+  return rowToObject<Document>(result.rows[0], result.columns);
 }
 
 /**
@@ -75,7 +76,7 @@ export async function getDocumentById(
     return null;
   }
 
-  return result.rows[0] as unknown as Document;
+  return rowToObject<Document>(result.rows[0], result.columns);
 }
 
 /**
@@ -90,7 +91,7 @@ export async function listDocumentsByUser(
     args: [userId],
   });
 
-  return result.rows as unknown as Document[];
+  return result.rows.map((row) => rowToObject<Document>(row, result.columns));
 }
 
 /**
@@ -135,7 +136,7 @@ export async function updateDocument(
     throw new Error("Document not found");
   }
 
-  return result.rows[0] as unknown as Document;
+  return rowToObject<Document>(result.rows[0], result.columns);
 }
 
 /**
@@ -166,5 +167,5 @@ export async function searchDocumentsByEmbedding(
     args: [userId, limit],
   });
 
-  return result.rows as unknown as Document[];
+  return result.rows.map((row) => rowToObject<Document>(row, result.columns));
 }

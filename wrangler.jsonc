@@ -17,6 +17,17 @@
   },
   "compatibility_flags": ["nodejs_compat"],
   /**
+   * KV Namespaces
+   * https://developers.cloudflare.com/kv/
+   */
+  "kv_namespaces": [
+    {
+      "binding": "CHAT_STREAMS",
+      "id": "placeholder-kv-id",
+      "preview_id": "preview-chat-streams"
+    }
+  ],
+  /**
    * Smart Placement
    * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
    */

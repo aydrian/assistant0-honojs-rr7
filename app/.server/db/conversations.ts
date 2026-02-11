@@ -1,4 +1,5 @@
 import type { Client } from "./client";
+import { rowToObject } from "./utils";
 
 export interface Conversation {
   id: string;
@@ -32,7 +33,7 @@ export async function createConversation(
     throw new Error("Failed to create conversation");
   }
 
-  return result.rows[0] as unknown as Conversation;
+  return rowToObject<Conversation>(result.rows[0], result.columns);
 }
 
 /**
@@ -51,7 +52,7 @@ export async function getConversationById(
     return null;
   }
 
-  return result.rows[0] as unknown as Conversation;
+  return rowToObject<Conversation>(result.rows[0], result.columns);
 }
 
 /**
@@ -67,7 +68,9 @@ export async function listConversationsByUser(
     args: [userId, limit],
   });
 
-  return result.rows as unknown as Conversation[];
+  return result.rows.map((row) =>
+    rowToObject<Conversation>(row, result.columns),
+  );
 }
 
 /**
@@ -89,7 +92,7 @@ export async function updateConversationTitle(
     throw new Error("Conversation not found");
   }
 
-  return result.rows[0] as unknown as Conversation;
+  return rowToObject<Conversation>(result.rows[0], result.columns);
 }
 
 /**

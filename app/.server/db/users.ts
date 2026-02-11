@@ -1,16 +1,5 @@
 import type { Client } from "./client";
-
-/**
- * Convert a Turso Row to a plain JavaScript object
- * Turso rows can be accessed by column name, but need explicit conversion
- */
-function rowToObject<T>(row: any, columns: string[]): T {
-  const obj: any = {};
-  for (const col of columns) {
-    obj[col] = row[col];
-  }
-  return obj as T;
-}
+import { rowToObject } from "./utils";
 
 export interface User {
   id: string;

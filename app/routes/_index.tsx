@@ -1,14 +1,12 @@
+import { useState } from "react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { useInterruptions } from "@auth0/ai-vercel/react";
 import { getAuth0 } from "@auth0/auth0-react-router";
 import type { Route } from "./+types/_index";
 import { Button } from "~/components/ui/button";
-import { getDb } from "~/.server/db/client";
-import {
-  createConversation,
-  listConversationsByUser,
-} from "~/.server/db/conversations";
-import { listMessagesByConversation } from "~/.server/db/messages";
-import { getUserByAuth0Id, createUser } from "~/.server/db/users";
 import { ChatWindow } from "~/components/chat/ChatWindow";
+import { ChatInput } from "~/components/chat/ChatInput";
 
 export function meta(_args: Route.MetaArgs) {
   return [
@@ -19,53 +17,43 @@ export function meta(_args: Route.MetaArgs) {
 
 export async function loader({ context }: Route.LoaderArgs) {
   const { user, isAuthenticated } = getAuth0(context);
-
-  // Allow unauthenticated access but show login prompt
-  if (!isAuthenticated) {
-    return { user: null, requiresAuth: true, conversationId: "", messages: [] };
-  }
-
-  const db = getDb(context);
-
-  // Get or create database user (same pattern as profile route)
-  let dbUser = await getUserByAuth0Id(db, user.sub);
-  if (!dbUser) {
-    dbUser = await createUser(db, {
-      id: crypto.randomUUID(),
-      auth0_id: user.sub,
-      email: user.email!,
-      name: user.name,
-      picture: user.picture,
-    });
-  }
-
-  // Get or create default conversation for user (using database user ID)
-  let conversations = await listConversationsByUser(db, dbUser.id, 1);
-
-  if (conversations.length === 0) {
-    const newConv = await createConversation(db, {
-      id: crypto.randomUUID(),
-      user_id: dbUser.id,
-      title: "New Chat",
-    });
-    conversations = [newConv];
-  }
-
-  // Load messages from most recent conversation
-  const messages = await listMessagesByConversation(db, conversations[0].id);
-
-  return {
-    user,
-    requiresAuth: false,
-    conversationId: conversations[0].id,
-    messages,
-  };
+  return { user, isAuthenticated };
 }
 
 export default function ChatPage({ loaderData }: Route.ComponentProps) {
-  const { requiresAuth, conversationId, messages } = loaderData;
+  const { isAuthenticated } = loaderData;
+  const [input, setInput] = useState("");
 
-  if (requiresAuth) {
+  // Use the AI SDK v6 chat hook with HTTP transport
+  // Wrapped with useInterruptions for Auth0 AI authorization flows
+  // sendAutomaticallyWhen enables client-side multi-step tool calling
+  const { messages, sendMessage, status, toolInterrupt: _toolInterrupt } = useInterruptions(
+    (handler) =>
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      useChat({
+        transport: new DefaultChatTransport({
+          api: "/api/chat",
+        }),
+        onError: handler((error: Error) => console.error("Chat error:", error)),
+        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      })
+  );
+
+  const handleSubmit = () => {
+    if (!input.trim()) return;
+
+    // Send message using AI SDK v6 API
+    sendMessage({ text: input });
+    setInput(""); // Clear input after sending
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+  };
+
+  const isLoading = status === "streaming" || status === "submitted";
+
+  if (!isAuthenticated) {
     return (
       <div className="container mx-auto px-4 py-16 text-center">
         <h1 className="text-4xl font-bold mb-4">Welcome to Assistant0</h1>
@@ -80,6 +68,19 @@ export default function ChatPage({ loaderData }: Route.ComponentProps) {
   }
 
   return (
-    <ChatWindow conversationId={conversationId} initialMessages={messages} />
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="flex-1 overflow-hidden">
+        <ChatWindow messages={messages} isLoading={isLoading} />
+      </div>
+
+      <div className="border-t p-4">
+        <ChatInput
+          input={input}
+          handleInputChange={handleInputChange}
+          handleSubmit={handleSubmit}
+          isLoading={isLoading}
+        />
+      </div>
+    </div>
   );
 }
